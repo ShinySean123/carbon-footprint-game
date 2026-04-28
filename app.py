@@ -20,18 +20,15 @@ df = load_data()
 # 定義抽題邏輯函式
 def get_options(data, mode):
     if mode == "同週次對決":
-        # 找出至少有兩個項目的週次
         week_counts = data['Week'].value_counts()
         valid_weeks = week_counts[week_counts >= 2].index.tolist()
         if valid_weeks:
             chosen_week = random.choice(valid_weeks)
-            # 從選定的週次中隨機抽2個
             return data[data['Week'] == chosen_week].sample(2).to_dict('records')
-    # 預設：不限週次，全域隨機抽2個
     return data.sample(2).to_dict('records')
 
-# 切換模式時的重置動作
-def change_mode():
+# 切換模式或下一題的重置動作
+def reset_question():
     st.session_state.answered = False
     st.session_state.current_options = get_options(df, st.session_state.mode)
     st.session_state.start_time = time.time()
@@ -47,85 +44,80 @@ if 'current_options' not in st.session_state:
     st.session_state.current_options = get_options(df, "不限週次")
 if 'answered' not in st.session_state:
     st.session_state.answered = False
-if 'result_msg' not in st.session_state:
-    st.session_state.result_msg = ""
 if 'start_time' not in st.session_state:
     st.session_state.start_time = time.time()
 if 'time_taken' not in st.session_state:
     st.session_state.time_taken = 0.0
 
-# 標題與說明
+# --- 側邊欄或頂部設定 ---
 st.title("🌍 碳足跡大對決：誰比較環保？")
-st.markdown("請選擇以下兩項物品中，**人均碳排放量較低（較環保）**的選項！")
-
-# 出題模式選擇 (切換時會自動觸發 change_mode)
-st.radio("🎯 選擇出題模式：", ["不限週次", "同週次對決"], horizontal=True, key="mode", on_change=change_mode)
 
 # 顯示計分板
-col_score1, col_score2 = st.columns(2)
-col_score1.metric("✅ 答對題數", st.session_state.score)
-col_score2.metric("❌ 答錯題數", st.session_state.wrong)
+col_score1, col_score2, col_mode = st.columns([1, 1, 2])
+col_score1.metric("✅ 答對", st.session_state.score)
+col_score2.metric("❌ 答錯", st.session_state.wrong)
+with col_mode:
+    st.radio("🎯 出題模式：", ["不限週次", "同週次對決"], horizontal=True, key="mode", on_change=reset_question)
 
 st.divider()
 
-# 取得當前題目
+# --- 📜 減碳小抄功能 ---
+with st.expander("📜 查看減碳小抄 (按我打開/關閉)"):
+    st.markdown("這裡有所有項目的排名，**碳排放由低到高**：")
+    # 這裡將資料由小到大排序
+    cheat_sheet_df = df.sort_values('CO2e').reset_index(drop=True)
+    # 只顯示重點欄位
+    st.dataframe(
+        cheat_sheet_df[['CO2e', 'Item', 'Week', 'Reason']].rename(
+            columns={'CO2e': '碳排放量', 'Item': '物品名稱', 'Week': '分類', 'Reason': '原因'}
+        ),
+        use_container_width=True,
+        hide_index=True
+    )
+
+st.divider()
+
+# --- 遊戲主體 ---
 item1 = st.session_state.current_options[0]
 item2 = st.session_state.current_options[1]
-
-# 判斷正確答案
 correct_item = item1 if item1['CO2e'] < item2['CO2e'] else item2
 
-# 3. 處理答題邏輯
 def check_answer(selected_item):
-    # 計算作答時間
     st.session_state.time_taken = time.time() - st.session_state.start_time
     st.session_state.answered = True
-    
     if selected_item['Item'] == correct_item['Item']:
         st.session_state.score += 1
-        st.session_state.result_msg = "🎉 答對了！你真內行！"
+        st.session_state.result_style = "success"
+        st.session_state.result_msg = f"🎉 答對了！耗時 {st.session_state.time_taken:.2f} 秒"
     else:
         st.session_state.wrong += 1
-        st.session_state.result_msg = "💨 答錯囉！再接再厲！"
+        st.session_state.result_style = "error"
+        st.session_state.result_msg = f"💨 答錯囉！這題花了你 {st.session_state.time_taken:.2f} 秒"
 
-def next_question():
-    st.session_state.current_options = get_options(df, st.session_state.mode)
-    st.session_state.answered = False
-    st.session_state.start_time = time.time() # 重新計時
-
-# 4. 建立互動介面
+# 顯示選項按鈕
 col1, col2 = st.columns(2)
-
 with col1:
-    st.caption(f"🏷️ 類別：{item1['Week']}")
+    st.caption(f"🏷️ {item1['Week']}")
     st.subheader(item1['Item'])
     if not st.session_state.answered:
-        st.button("選擇這個", key="btn1", on_click=check_answer, args=(item1,), use_container_width=True)
+        st.button("這項排放較低", key="btn1", on_click=check_answer, args=(item1,), use_container_width=True)
 
 with col2:
-    st.caption(f"🏷️ 類別：{item2['Week']}")
+    st.caption(f"🏷️ {item2['Week']}")
     st.subheader(item2['Item'])
     if not st.session_state.answered:
-        st.button("選擇這個", key="btn2", on_click=check_answer, args=(item2,), use_container_width=True)
+        st.button("這項排放較低", key="btn2", on_click=check_answer, args=(item2,), use_container_width=True)
 
-# 5. 顯示結果與解析
+# 顯示結果與數據解析
 if st.session_state.answered:
-    # 顯示結果與計時器
-    col_res1, col_res2 = st.columns([3, 1])
-    with col_res1:
-        if "答對了" in st.session_state.result_msg:
-            st.success(st.session_state.result_msg)
-        else:
-            st.error(st.session_state.result_msg)
-    with col_res2:
-        st.info(f"⏱️ 耗時: {st.session_state.time_taken:.2f} 秒")
+    if st.session_state.result_style == "success":
+        st.success(st.session_state.result_msg)
+    else:
+        st.error(st.session_state.result_msg)
     
-    st.markdown("### 📊 數據解析")
+    st.markdown("### 📊 數據詳情")
+    result_display = pd.DataFrame([item1, item2])[['Item', 'CO2e', 'Reason']]
+    result_display.columns = ['物品名稱', '碳排放量 (CO2e)', '原因說明']
+    st.table(result_display)
     
-    # 整理要顯示的表格資料
-    result_df = pd.DataFrame([item1, item2])[['Item', 'Week', 'CO2e', 'Reason']]
-    result_df.columns = ['物品名稱', '分類週數', '碳排放量 (CO2e)', '原因說明']
-    
-    st.table(result_df)
-    
-    st.button("下一題 ➡️", on_click=next_question, type="primary")
+    st.button("下一題 ➡️", on_click=reset_question, type="primary")
